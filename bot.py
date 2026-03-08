@@ -2118,82 +2118,115 @@ async def entfernen_autocomplete(
 
 # ==================== BULK AUSWERTUNG ====================
 
-class BulkAuswertungModal(discord.ui.Modal):
-    """Modal für Massenerfassung von Teilnehmern."""
-    def __init__(self, ausbildung_id: int, bereich: str, datum: str):
-        super().__init__(title=f"Teilnehmer eintragen")
+class BulkPunkteModal(discord.ui.Modal):
+    """Modal das NUR nach der Punktzahl fragt — User wurde schon per Dropdown gewählt."""
+    def __init__(self, ausbildung_id: int, bereich: str, datum: str, user: discord.Member, view_ref):
+        super().__init__(title=f"Punkte für {user.display_name}")
         self.ausbildung_id = ausbildung_id
         self.bereich = bereich
         self.datum = datum
+        self.user = user
+        self.view_ref = view_ref
 
-        self.teilnehmer_input = discord.ui.TextInput(
-            label="Teilnehmer (pro Zeile: @User Punkte)",
-            placeholder="@Max 45\n@Lisa 38\n@Tom 22",
-            style=discord.TextStyle.paragraph,
+        self.punktzahl = discord.ui.TextInput(
+            label="Punktzahl",
+            placeholder="z.B. 45",
             required=True,
-            max_length=2000
+            max_length=5
         )
-        self.add_item(self.teilnehmer_input)
+        self.add_item(self.punktzahl)
 
     async def on_submit(self, interaction: discord.Interaction):
-        zeilen = [z.strip() for z in self.teilnehmer_input.value.strip().splitlines() if z.strip()]
-        if not zeilen:
-            await interaction.response.send_message("❌ Keine Teilnehmer angegeben.", ephemeral=True)
+        try:
+            punkte = int(self.punktzahl.value.strip())
+        except ValueError:
+            await interaction.response.send_message("❌ Bitte eine gültige Zahl eingeben.", ephemeral=True)
             return
 
-        erfolg = []
-        fehler = []
-
-        for zeile in zeilen:
-            # Erwartetes Format: <@123> 45  oder  <@!123> 45  oder  @name 45
-            match = re.match(r'(<@!?\d+>)\s+(\d+)', zeile)
-            if not match:
-                # Auch "UserID Punkte" Format unterstützen
-                match_id = re.match(r'(\d{5,})\s+(\d+)', zeile)
-                if match_id:
-                    mention = f"<@{match_id.group(1)}>"
-                    punkte = int(match_id.group(2))
-                else:
-                    fehler.append(f"`{zeile}` — Ungültiges Format")
-                    continue
-            else:
-                mention = match.group(1)
-                punkte = int(match.group(2))
-
-            ok = data_manager.add_teilnehmer(
-                self.ausbildung_id, mention, punkte, self.datum
+        ok = data_manager.add_teilnehmer(
+            self.ausbildung_id, self.user.mention, punkte, self.datum
+        )
+        if ok:
+            self.view_ref.eingetragen.append(f"{self.user.mention} — **{punkte}** Punkte")
+            await interaction.response.edit_message(
+                content=self.view_ref.build_message(),
+                view=self.view_ref
             )
-            if ok:
-                erfolg.append(f"{mention} — {punkte} Punkte")
-            else:
-                fehler.append(f"{mention} — Fehler beim Speichern")
+        else:
+            await interaction.response.send_message("❌ Fehler beim Speichern.", ephemeral=True)
 
-        antwort = ""
-        if erfolg:
-            antwort += f"✅ **{len(erfolg)} Teilnehmer eingetragen:**\n"
-            for e in erfolg:
-                antwort += f"  • {e}\n"
-        if fehler:
-            antwort += f"\n❌ **{len(fehler)} Fehler:**\n"
-            for f_text in fehler:
-                antwort += f"  • {f_text}\n"
 
-        await interaction.response.send_message(antwort, ephemeral=True)
+class BulkUserSelect(discord.ui.UserSelect):
+    """Dropdown zum Auswählen eines Server-Mitglieds."""
+    def __init__(self):
+        super().__init__(placeholder="Teilnehmer auswählen...", min_values=1, max_values=1)
 
-        if erfolg:
+    async def callback(self, interaction: discord.Interaction):
+        user = self.values[0]
+        view = self.view
+        await interaction.response.send_modal(
+            BulkPunkteModal(
+                view.ausbildung_id,
+                view.bereich,
+                view.datum,
+                user,
+                view
+            )
+        )
+
+
+class BulkFertigButton(discord.ui.Button):
+    """Button zum Abschließen der Bulk-Eingabe."""
+    def __init__(self):
+        super().__init__(label="✅ Fertig", style=discord.ButtonStyle.success)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        for child in view.children:
+            child.disabled = True
+        count = len(view.eingetragen)
+        await interaction.response.edit_message(
+            content=f"✅ **{count} Teilnehmer eingetragen** für {view.bereich}.\n\n" +
+                    "\n".join(f"• {e}" for e in view.eingetragen) if view.eingetragen else "Keine Teilnehmer eingetragen.",
+            view=view
+        )
+        if view.eingetragen:
             await log_aktion(
                 "👥 Bulk-Auswertung",
-                f"{len(erfolg)} Teilnehmer für {self.bereich} eingetragen.",
+                f"{count} Teilnehmer für {view.bereich} eingetragen.",
                 discord.Color.blue(),
                 [
-                    ("Ausbildung", f"{self.bereich} (ID: {self.ausbildung_id})", True),
-                    ("Anzahl", str(len(erfolg)), True),
+                    ("Ausbildung", f"{view.bereich} (ID: {view.ausbildung_id})", True),
+                    ("Anzahl", str(count), True),
                     ("Von", interaction.user.display_name, True)
                 ]
             )
+        view.stop()
 
 
-@tree.command(name="bulk", description="Mehrere Teilnehmer auf einmal zur Auswertung hinzufügen")
+class BulkAuswertungView(discord.ui.View):
+    """View mit User-Dropdown + Fertig-Button für einfache Bulk-Eingabe."""
+    def __init__(self, ausbildung_id: int, bereich: str, datum: str):
+        super().__init__(timeout=300)
+        self.ausbildung_id = ausbildung_id
+        self.bereich = bereich
+        self.datum = datum
+        self.eingetragen: List[str] = []
+        self.add_item(BulkUserSelect())
+        self.add_item(BulkFertigButton())
+
+    def build_message(self) -> str:
+        msg = f"**Teilnehmer eintragen — {self.bereich}**\n\n"
+        msg += "Wähle unten einen Teilnehmer aus, gib die Punkte ein, und wiederhole das für jeden weiteren.\n"
+        msg += "Wenn du fertig bist, drücke **✅ Fertig**.\n"
+        if self.eingetragen:
+            msg += f"\n📋 **Bereits eingetragen ({len(self.eingetragen)}):**\n"
+            for e in self.eingetragen:
+                msg += f"• {e}\n"
+        return msg
+
+
+@tree.command(name="bulk", description="Mehrere Teilnehmer einfach zur Auswertung hinzufügen")
 @app_commands.describe(ausbildung="Wähle die Ausbildung")
 async def bulk_command(
     interaction: discord.Interaction,
@@ -2218,13 +2251,8 @@ async def bulk_command(
         )
         return
 
-    await interaction.response.send_modal(
-        BulkAuswertungModal(
-            ausbildung_id,
-            ausbildung_data['bereich'],
-            ausbildung_data['datum']
-        )
-    )
+    view = BulkAuswertungView(ausbildung_id, ausbildung_data['bereich'], ausbildung_data['datum'])
+    await interaction.response.send_message(view.build_message(), view=view, ephemeral=True)
 
 
 @bulk_command.autocomplete('ausbildung')
