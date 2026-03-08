@@ -124,14 +124,27 @@ class DataManager:
                 cur.execute("SELECT * FROM ausbildungen ORDER BY id")
                 rows = cur.fetchall()
                 result = {}
+                ids = []
                 for row in rows:
                     entry = dict(row)
-                    cur.execute(
-                        "SELECT name, punktzahl, datum FROM teilnehmer WHERE ausbildung_id = %s",
-                        (entry['id'],)
-                    )
-                    entry['teilnehmer'] = [dict(t) for t in cur.fetchall()]
+                    entry['teilnehmer'] = []
                     result[str(entry['id'])] = entry
+                    ids.append(entry['id'])
+
+                if ids:
+                    cur.execute(
+                        "SELECT ausbildung_id, name, punktzahl, datum FROM teilnehmer WHERE ausbildung_id = ANY(%s)",
+                        (ids,)
+                    )
+                    for t in cur.fetchall():
+                        t = dict(t)
+                        aid = str(t['ausbildung_id'])
+                        if aid in result:
+                            result[aid]['teilnehmer'].append({
+                                'name': t['name'],
+                                'punktzahl': t['punktzahl'],
+                                'datum': t['datum']
+                            })
                 return result
         finally:
             conn.close()
@@ -145,14 +158,27 @@ class DataManager:
                 )
                 rows = cur.fetchall()
                 result = {}
+                ids = []
                 for row in rows:
                     entry = dict(row)
-                    cur.execute(
-                        "SELECT name, punktzahl, datum FROM teilnehmer WHERE ausbildung_id = %s",
-                        (entry['id'],)
-                    )
-                    entry['teilnehmer'] = [dict(t) for t in cur.fetchall()]
+                    entry['teilnehmer'] = []
                     result[str(entry['id'])] = entry
+                    ids.append(entry['id'])
+
+                if ids:
+                    cur.execute(
+                        "SELECT ausbildung_id, name, punktzahl, datum FROM teilnehmer WHERE ausbildung_id = ANY(%s)",
+                        (ids,)
+                    )
+                    for t in cur.fetchall():
+                        t = dict(t)
+                        aid = str(t['ausbildung_id'])
+                        if aid in result:
+                            result[aid]['teilnehmer'].append({
+                                'name': t['name'],
+                                'punktzahl': t['punktzahl'],
+                                'datum': t['datum']
+                            })
                 return result
         finally:
             conn.close()

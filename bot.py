@@ -7,7 +7,7 @@ import re
 from typing import Optional, List, Dict, Union
 from dotenv import load_dotenv
 from data_manager import DataManager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Lade Umgebungsvariablen
 load_dotenv()
@@ -33,17 +33,6 @@ with open(CONFIG_PATH, 'r', encoding='utf-8-sig') as f:
     config = json.load(f)
 
 
-def save_config() -> None:
-    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
-
-
-def reload_config() -> None:
-    global config
-    with open(CONFIG_PATH, 'r', encoding='utf-8-sig') as f:
-        config = json.load(f)
-
-
 async def log_aktion(title: str, description: str, color: discord.Color = discord.Color.blue(), fields: List[tuple] = None) -> None:
     """
     Loggt eine Aktion in den Log-Kanal.
@@ -67,7 +56,7 @@ async def log_aktion(title: str, description: str, color: discord.Color = discor
             title=title,
             description=description,
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
         if fields:
@@ -94,7 +83,7 @@ def pruefe_anfrage_cooldown(user_id: int) -> Optional[timedelta]:
     
     last_anfrage = anfrage_cooldowns[user_id]
     cooldown_duration = timedelta(minutes=10)
-    remaining_time = last_anfrage + cooldown_duration - datetime.utcnow()
+    remaining_time = last_anfrage + cooldown_duration - datetime.now(timezone.utc)
     
     if remaining_time.total_seconds() <= 0:
         # Cooldown ist abgelaufen
@@ -111,7 +100,7 @@ def setze_anfrage_cooldown(user_id: int) -> None:
     Args:
         user_id: Die Discord User ID
     """
-    anfrage_cooldowns[user_id] = datetime.utcnow()
+    anfrage_cooldowns[user_id] = datetime.now(timezone.utc)
 
 
 # ==================== HILFFUNKTIONEN ====================
@@ -145,20 +134,12 @@ def hat_ausbilder_berechtigung(interaction: discord.Interaction) -> bool:
 def hat_statistik_berechtigung(interaction: discord.Interaction) -> bool:
     """
     Prüft, ob der User die Berechtigung für Statistik-Commands hat.
-    
-    Args:
-        interaction: Discord Interaction Objekt
-    
-    Returns:
-        True wenn berechtigt, False sonst
     """
     statistik_rolle = 1420507026739429396
     
-    # Prüfe Administrator
     if interaction.user.guild_permissions.administrator:
         return True
     
-    # Prüfe, ob der User die Statistik-Rolle hat
     user_rollen_ids = [role.id for role in interaction.user.roles]
     return statistik_rolle in user_rollen_ids
 
@@ -187,7 +168,6 @@ def hat_anfrage_berechtigung(interaction: discord.Interaction, bereich: str) -> 
     Prüft, ob der User die Berechtigung hat, Ausbildungsanfragen zu akzeptieren.
     Erlaubt außerdem Administratoren.
     """
-    reload_config()
     if interaction.user.guild_permissions.administrator:
         return True
 
@@ -436,22 +416,6 @@ def format_ausbildungs_nachricht(
     return nachricht
 
 
-def get_ausbildungen_choices() -> List[app_commands.Choice[str]]:
-    """
-    Erstellt eine Liste von Choices für die Ausbildungsauswahl.
-    
-    Returns:
-        Liste von app_commands.Choice-Objekten für alle Ausbildungen
-    """
-    ausbildungen = data_manager.get_non_archived_ausbildungen()
-    choices = []
-    
-    for ausb_id, ausb_data in ausbildungen.items():
-        label = f"ID {ausb_id}: {ausb_data['bereich']} - {ausb_data['datum']}"
-        choices.append(app_commands.Choice(name=label, value=ausb_id))
-    
-    # Discord erlaubt maximal 25 Choices
-    return choices[:25]
 
 
 # ==================== ARCHIVIEREN & EXPORT ====================
@@ -508,7 +472,6 @@ class AusbildungsAnfrageModal(discord.ui.Modal):
             )
             return
         
-        reload_config()
         abteilung_config = config["abteilungen"].get(self.bereich)
         if not abteilung_config:
             await interaction.response.send_message(
@@ -560,7 +523,7 @@ class AusbildungsAnfrageModal(discord.ui.Modal):
                 "Bitte prüft Datum/Uhrzeit und bestätigt bei Verfügbarkeit."
             ),
             color=discord.Color.from_rgb(88, 101, 242),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         embed.set_author(name=str(interaction.user), icon_url=interaction.user.display_avatar.url)
         embed.add_field(name="👤 Anfragender", value=interaction.user.mention, inline=True)
@@ -771,7 +734,7 @@ class AnfrageAkzeptierenView(discord.ui.View):
                 title="✅ Anfrage akzeptiert",
                 description="Deine Ausbildungsanfrage wurde bestätigt.",
                 color=discord.Color.green(),
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
             dm_embed.add_field(name="Ausbildung", value=bereich, inline=False)
             dm_embed.add_field(name="Datum", value=datum_val, inline=True)
@@ -805,8 +768,8 @@ class AnfrageAkzeptierenView(discord.ui.View):
             ]
         )
 
-@tree.command(name="exportiere_ausbildungen", description="Exportiert alle aktiven Ausbildungen als TXT (ohne Archivierung)")
-async def exportiere_ausbildungen_command(
+@tree.command(name="export", description="Exportiert alle aktiven Ausbildungen als TXT-Datei")
+async def export_command(
     interaction: discord.Interaction,
 ):
     """
@@ -872,9 +835,9 @@ async def exportiere_ausbildungen_command(
             ephemeral=True
         )
 
-@tree.command(name="archiviere_ausbildungen", description="Archiviert Ausbildungen per ID-Liste (keine Löschung)")
+@tree.command(name="archiv", description="Archiviert Ausbildungen per ID-Liste")
 @app_commands.describe(ids="Ausbildungs-IDs, getrennt durch Leerzeichen oder Komma, z. B. '12 15,18'")
-async def archiviere_ausbildungen_command(
+async def archiv_command(
     interaction: discord.Interaction,
     ids: str
 ):
@@ -926,8 +889,8 @@ async def archiviere_ausbildungen_command(
     )
 
 
-@tree.command(name="archiviere_alle_ausbildungen", description="Archiviert alle nicht archivierten Ausbildungen (keine Löschung)")
-async def archiviere_alle_ausbildungen_command(
+@tree.command(name="archiv_alle", description="Archiviert alle aktiven Ausbildungen auf einmal")
+async def archiv_alle_command(
     interaction: discord.Interaction,
 ):
     """
@@ -1003,7 +966,6 @@ async def anfrage_panel_command(
         )
         return
 
-    reload_config()
     anfrage_kanal_id = config.get("anfrage_kanal_id")
     if not anfrage_kanal_id or "PLACEHOLDER" in str(anfrage_kanal_id):
         await interaction.response.send_message(
@@ -1141,7 +1103,6 @@ async def anfrage_debug_command(
         )
         return
 
-    reload_config()
     if bereich not in config.get("abteilungen", {}):
         await interaction.response.send_message(
             "❌ Unbekannte Ausbildung.",
@@ -1334,7 +1295,7 @@ def parse_mitarbeiter_mention(raw_value: str) -> str:
     raise ValueError("Ungültiges Format")
 
 
-@tree.command(name="ankuendigung_bearbeiten", description="Bearbeite eine bereits angekündigte Ausbildung")
+@tree.command(name="bearbeiten", description="Bearbeite eine angekündigte Ausbildung")
 @app_commands.describe(
     ausbildung="Wähle die angekündigte Ausbildung",
     datum="Neues Datum (optional)",
@@ -1343,7 +1304,7 @@ def parse_mitarbeiter_mention(raw_value: str) -> str:
     cohost="Neuer Co-Host als Mention/ID oder '-' zum Austragen (optional)",
     helfer="Neuer Helfer als Mention/ID oder '-' zum Austragen (optional)"
 )
-async def ankuendigung_bearbeiten_command(
+async def bearbeiten_command(
     interaction: discord.Interaction,
     ausbildung: str,
     datum: Optional[str] = None,
@@ -1389,13 +1350,6 @@ async def ankuendigung_bearbeiten_command(
     if ausbildung_data.get("archiviert", False):
         await interaction.response.send_message(
             "❌ Diese Ausbildung ist bereits archiviert und kann nicht mehr bearbeitet werden.",
-            ephemeral=True
-        )
-        return
-
-    if ausbildung_data.get("ausgewertet", False):
-        await interaction.response.send_message(
-            "❌ Diese Ausbildung ist bereits ausgewertet und kann nicht mehr als Ankündigung bearbeitet werden.",
             ephemeral=True
         )
         return
@@ -1492,19 +1446,48 @@ async def ankuendigung_bearbeiten_command(
     )
 
 
+# ==================== GEMEINSAME AUTOCOMPLETE-HANDLER ====================
+
+async def offene_ausbildung_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+) -> List[app_commands.Choice[str]]:
+    """Gemeinsamer Autocomplete für offene (nicht ausgewertete, nicht archivierte) Ausbildungen."""
+    ausbildungen = data_manager.get_non_archived_ausbildungen()
+    choices = []
+    for ausb_id, ausb_data in ausbildungen.items():
+        if ausb_data.get("ausgewertet", False):
+            continue
+        label = f"{ausb_data['bereich']} - {ausb_data['datum']} (ID: {ausb_id})"
+        if current.lower() in label.lower():
+            choices.append(app_commands.Choice(name=label, value=ausb_id))
+    return choices[:25]
+
+
+async def alle_ausbildung_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+) -> List[app_commands.Choice[str]]:
+    """Gemeinsamer Autocomplete für alle nicht-archivierten Ausbildungen."""
+    ausbildungen = data_manager.get_non_archived_ausbildungen()
+    choices = []
+    for ausb_id, ausb_data in ausbildungen.items():
+        label = f"{ausb_data['bereich']} - {ausb_data['datum']} (ID: {ausb_id})"
+        if current.lower() in label.lower():
+            choices.append(app_commands.Choice(name=label, value=ausb_id))
+    return choices[:25]
+
+
 # Autocomplete für Bereich bei ankuendigen
 @ankuendigen_command.autocomplete('bereich')
 async def bereich_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> List[app_commands.Choice[str]]:
-    """
-    Autocomplete-Handler für die Bereichsauswahl.
-    """
-    abteilungen = list(config["abteilungen"].keys())
+    """Autocomplete-Handler für die Bereichsauswahl (gemeinsam genutzt)."""
     return [
         app_commands.Choice(name=abt, value=abt)
-        for abt in abteilungen
+        for abt in config["abteilungen"]
         if current.lower() in abt.lower()
     ]
 
@@ -1514,12 +1497,7 @@ async def anfrage_toggle_bereich_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> List[app_commands.Choice[str]]:
-    abteilungen = list(config.get("abteilungen", {}).keys())
-    return [
-        app_commands.Choice(name=abt, value=abt)
-        for abt in abteilungen
-        if current.lower() in abt.lower()
-    ]
+    return await bereich_autocomplete(interaction, current)
 
 
 @anfrage_debug_command.autocomplete('bereich')
@@ -1527,36 +1505,18 @@ async def anfrage_debug_bereich_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> List[app_commands.Choice[str]]:
-    abteilungen = list(config.get("abteilungen", {}).keys())
-    return [
-        app_commands.Choice(name=abt, value=abt)
-        for abt in abteilungen
-        if current.lower() in abt.lower()
-    ]
+    return await bereich_autocomplete(interaction, current)
 
 
-@ankuendigung_bearbeiten_command.autocomplete('ausbildung')
-async def ankuendigung_bearbeiten_autocomplete(
+@bearbeiten_command.autocomplete('ausbildung')
+async def bearbeiten_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> List[app_commands.Choice[str]]:
-    """
-    Autocomplete für angekündigte (nicht ausgewertete) Ausbildungen.
-    """
-    ausbildungen = data_manager.get_non_archived_ausbildungen()
-    choices = []
-
-    for ausb_id, ausb_data in ausbildungen.items():
-        if ausb_data.get("ausgewertet", False):
-            continue
-        label = f"{ausb_data['bereich']} - {ausb_data['datum']} (ID: {ausb_id})"
-        if current.lower() in label.lower():
-            choices.append(app_commands.Choice(name=label, value=ausb_id))
-
-    return choices[:25]
+    return await offene_ausbildung_autocomplete(interaction, current)
 
 
-@tree.command(name="auswertung", description="Füge Teilnehmer zur Auswertung hinzu")
+@tree.command(name="auswertung", description="Füge einen Teilnehmer zur Auswertung hinzu")
 @app_commands.describe(
     ausbildung="Wähle die Ausbildung",
     teilnehmer="Teilnehmer der Ausbildung",
@@ -1635,28 +1595,14 @@ async def ausbildung_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> List[app_commands.Choice[str]]:
-    """
-    Autocomplete-Handler für die Ausbildungsauswahl.
-    Zeigt alle verfügbaren Ausbildungen mit Bereich und Datum.
-    """
-    ausbildungen = data_manager.get_non_archived_ausbildungen()
-    choices = []
-    
-    for ausb_id, ausb_data in ausbildungen.items():
-        label = f"{ausb_data['bereich']} - {ausb_data['datum']} (ID: {ausb_id})"
-        # Filtere nach dem eingegebenen Text
-        if current.lower() in label.lower():
-            choices.append(app_commands.Choice(name=label, value=ausb_id))
-    
-    # Discord erlaubt maximal 25 Choices
-    return choices[:25]
+    return await alle_ausbildung_autocomplete(interaction, current)
 
 
-@tree.command(name="auswertung_abschliessen", description="Schließe die Auswertung ab und poste sie")
+@tree.command(name="abschliessen", description="Schließe eine Auswertung ab und poste das Ergebnis")
 @app_commands.describe(
     ausbildung="Wähle die Ausbildung"
 )
-async def auswertung_abschliessen_command(
+async def abschliessen_command(
     interaction: discord.Interaction,
     ausbildung: str
 ):
@@ -1725,7 +1671,7 @@ async def auswertung_abschliessen_command(
         else:
             nicht_bestanden.append(t)
     
-    # Erstelle Auswertungsnachricht im neuen Format
+    # Erstelle Auswertungsnachricht
     nachricht = f"# <:PolizeiLogo:1426569477738205287> __Auswertung der {bereich}__ <:PolizeiLogo:1426569477738205287>\n\n\n"
     
     nachricht += "**Bestanden haben:**\n\n"
@@ -1748,7 +1694,6 @@ async def auswertung_abschliessen_command(
     else:
         nachricht += "> Alle Teilnehmer haben bestanden!\n\n"
     
-    # Feedback-Link und Abschluss
     feedback_link = config.get("feedback_link", "https://discord.com/channels/1420498529708806166/1420665010543263816")
     nachricht += f"\n\n\nEure Ausbilder wünschen euch alles gute!\n"
     nachricht += f"Über ein {feedback_link} würden wir uns dennoch freuen!\n\n\n"
@@ -1772,6 +1717,7 @@ async def auswertung_abschliessen_command(
         return
     
     # Sende Auswertung und verwalte Rollen
+    rollen_warnung = ""
     try:
         await kanal.send(nachricht)
         data_manager.set_auswertung_abgeschlossen(ausbildung_id, True)
@@ -1781,7 +1727,13 @@ async def auswertung_abschliessen_command(
         rolle_nicht_bestanden_id = abteilung_config.get("rolle_nicht_bestanden")
         
         # Nur Rollen verwalten, wenn sie definiert sind (nicht PLACEHOLDER)
-        if rolle_bestanden_id and "PLACEHOLDER" not in rolle_bestanden_id:
+        hat_placeholder = (
+            (rolle_bestanden_id and "PLACEHOLDER" in str(rolle_bestanden_id)) or
+            (rolle_nicht_bestanden_id and "PLACEHOLDER" in str(rolle_nicht_bestanden_id))
+        )
+        if hat_placeholder:
+            rollen_warnung = "\n⚠️ **Hinweis:** Rollen für diese Abteilung sind noch nicht konfiguriert (PLACEHOLDER). Rollenvergabe übersprungen."
+        elif rolle_bestanden_id and "PLACEHOLDER" not in rolle_bestanden_id:
             rolle_bestanden = interaction.guild.get_role(int(rolle_bestanden_id))
             rolle_nicht_bestanden = None
             
@@ -1815,7 +1767,7 @@ async def auswertung_abschliessen_command(
                     pass
         
         await interaction.response.send_message(
-            f"✅ Auswertung erfolgreich im Kanal {kanal.mention} gepostet!",
+            f"✅ Auswertung erfolgreich im Kanal {kanal.mention} gepostet!{rollen_warnung}",
             ephemeral=True
         )
         await log_aktion(
@@ -1842,25 +1794,60 @@ async def auswertung_abschliessen_command(
 
 
 # Autocomplete für Ausbildungsauswahl beim Abschließen
-@auswertung_abschliessen_command.autocomplete('ausbildung')
-async def ausbildung_abschliessen_autocomplete(
+@abschliessen_command.autocomplete('ausbildung')
+async def abschliessen_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> List[app_commands.Choice[str]]:
-    """
-    Autocomplete-Handler für die Ausbildungsauswahl beim Abschließen.
-    """
-    ausbildungen = data_manager.get_non_archived_ausbildungen()
-    choices = []
-    
-    for ausb_id, ausb_data in ausbildungen.items():
-        if ausb_data.get("ausgewertet", False):
-            continue
-        label = f"{ausb_data['bereich']} - {ausb_data['datum']} (ID: {ausb_id})"
-        if current.lower() in label.lower():
-            choices.append(app_commands.Choice(name=label, value=ausb_id))
-    
-    return choices[:25]
+    return await offene_ausbildung_autocomplete(interaction, current)
+
+
+@tree.command(name="uebersicht", description="Zeigt alle aktiven Ausbildungen auf einen Blick")
+async def uebersicht_command(interaction: discord.Interaction):
+    """Übersicht aller nicht-archivierten Ausbildungen."""
+    if not hat_ausbilder_berechtigung(interaction):
+        await interaction.response.send_message(
+            "❌ Du hast keine Berechtigung, diesen Command zu nutzen!",
+            ephemeral=True
+        )
+        return
+
+    active = data_manager.get_non_archived_ausbildungen()
+    if not active:
+        await interaction.response.send_message(
+            "📋 Keine aktiven Ausbildungen vorhanden.",
+            ephemeral=True
+        )
+        return
+
+    offen = [a for a in active.values() if not a.get('ausgewertet')]
+    ausgewertet = [a for a in active.values() if a.get('ausgewertet')]
+
+    embed = discord.Embed(
+        title="📋 Aktive Ausbildungen",
+        description=(
+            f"**{len(active)}** aktive Ausbildung(en) — "
+            f"📝 {len(offen)} offen • 📊 {len(ausgewertet)} ausgewertet"
+        ),
+        color=discord.Color.from_rgb(88, 101, 242),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    for ausb_id, ausb in sorted(active.items(), key=lambda x: int(x[0])):
+        status = "📊 Ausgewertet" if ausb.get('ausgewertet') else "📝 Offen"
+        teilnehmer_count = len(ausb.get('teilnehmer', []))
+        embed.add_field(
+            name=f"#{ausb_id} • {ausb['bereich']}",
+            value=(
+                f"📅 {ausb['datum']} ⏰ {ausb['uhrzeit']}\n"
+                f"👤 {ausb['host']}\n"
+                f"👥 {teilnehmer_count} Teilnehmer | {status}"
+            ),
+            inline=True
+        )
+
+    embed.set_footer(text="Akademie • Übersicht")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @tree.command(name="statistik_alle", description="Zeigt Statistiken aller Ausbilder")
@@ -1895,20 +1882,28 @@ async def statistik_alle_command(
     # Sortiere nach Gesamt-Anzahl (absteigend)
     sortierte_stats = sorted(stats.items(), key=lambda x: x[1]['gesamt'], reverse=True)
     
-    # Erstelle die Nachricht
-    nachricht = f"**Ausbilder-Statistik der letzten {tage} Tage**\n\n"
-    
-    for user_mention, user_stats in sortierte_stats:
+    embed = discord.Embed(
+        title="📈 Ausbilder-Statistik",
+        description=f"Zeitraum: Letzte **{tage} Tage** • {len(sortierte_stats)} Ausbilder",
+        color=discord.Color.from_rgb(88, 101, 242),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    for i, (user_mention, user_stats) in enumerate(sortierte_stats[:25], 1):
+        medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, "▫️")
         gehalt = user_stats['host'] * 3000 + user_stats['cohost'] * 1500
-        nachricht += f"{user_mention}\n"
-        nachricht += f"Host: {user_stats['host']}x | Co-Host: {user_stats['cohost']}x | Helfer: {user_stats['helfer']}x\n"
-        nachricht += f"**Gesamt: {user_stats['gesamt']}x** | **Gehalt: {gehalt:,} $**\n\n"
-    
-    # Discord hat ein 2000 Zeichen Limit
-    if len(nachricht) > 2000:
-        nachricht = nachricht[:1997] + "..."
-    
-    await interaction.response.send_message(nachricht, ephemeral=True)
+        embed.add_field(
+            name=f"{medal} Platz {i}",
+            value=(
+                f"{user_mention}\n"
+                f"🎤 Host: **{user_stats['host']}x** • 🤝 Co-Host: **{user_stats['cohost']}x** • 🙋 Helfer: **{user_stats['helfer']}x**\n"
+                f"📊 Gesamt: **{user_stats['gesamt']}** | 💰 Gehalt: **{gehalt:,}$**"
+            ),
+            inline=False
+        )
+
+    embed.set_footer(text="Akademie • Statistik")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @tree.command(name="statistik_person", description="Zeigt Statistiken einer bestimmten Person")
@@ -1942,24 +1937,36 @@ async def statistik_person_command(
         )
         return
     
-    # Erstelle die Nachricht
-    nachricht = f"**Statistik für {person.mention}**\n"
-    nachricht += f"Zeitraum: Letzte {tage} Tage\n\n"
-    
+    # Erstelle Embed
     gehalt = stats['host'] * 3000 + stats['cohost'] * 1500
-    nachricht += f"Host: {stats['host']}x | Co-Host: {stats['cohost']}x | Helfer: {stats['helfer']}x\n"
-    nachricht += f"**Gesamt: {stats['gesamt']}x** | **Gehalt: {gehalt:,} $**\n\n"
-    
+
+    embed = discord.Embed(
+        title=f"📈 Statistik — {person.display_name}",
+        description=f"Zeitraum: Letzte **{tage} Tage**",
+        color=discord.Color.from_rgb(88, 101, 242),
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_thumbnail(url=person.display_avatar.url)
+    embed.add_field(
+        name="📊 Übersicht",
+        value=(
+            f"🎤 Host: **{stats['host']}x** • 🤝 Co-Host: **{stats['cohost']}x** • 🙋 Helfer: **{stats['helfer']}x**\n"
+            f"📊 Gesamt: **{stats['gesamt']}** | 💰 Gehalt: **{gehalt:,}$**"
+        ),
+        inline=False
+    )
+
     if ausbildungs_liste:
-        nachricht += "**Durchgeführte Ausbildungen:**\n"
-        for ausb in ausbildungs_liste:
-            nachricht += f"{ausb['datum']} - {ausb['bereich']} ({ausb['rolle']})\n"
-    
-    # Discord hat ein 2000 Zeichen Limit
-    if len(nachricht) > 2000:
-        nachricht = nachricht[:1997] + "..."
-    
-    await interaction.response.send_message(nachricht, ephemeral=True)
+        liste_text = ""
+        for ausb in ausbildungs_liste[:15]:
+            rolle_emoji = {"Host": "🎤", "Co-Host": "🤝", "Helfer": "🙋"}.get(ausb['rolle'], "•")
+            liste_text += f"{rolle_emoji} **{ausb['datum']}** — {ausb['bereich']}\n"
+        if len(ausbildungs_liste) > 15:
+            liste_text += f"*...und {len(ausbildungs_liste) - 15} weitere*"
+        embed.add_field(name="📋 Durchgeführte Ausbildungen", value=liste_text, inline=False)
+
+    embed.set_footer(text="Akademie • Personenstatistik")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ==================== TEILNEHMER ENTFERNEN ====================
@@ -1968,15 +1975,23 @@ class TeilnehmerSelect(discord.ui.Select):
     """
     Select-Menu für die Auswahl von Teilnehmern zum Entfernen.
     """
-    def __init__(self, ausbildung_id: int, teilnehmer_liste: List[Dict]):
+    def __init__(self, ausbildung_id: int, teilnehmer_liste: List[Dict], guild: discord.Guild = None):
         self.ausbildung_id = ausbildung_id
         self.teilnehmer_liste = teilnehmer_liste
         
         # Erstelle Options aus Teilnehmern
         options = []
         for idx, teilnehmer in enumerate(teilnehmer_liste):
+            # Zeige lesbaren Namen statt roher Mention
+            display_name = teilnehmer["name"]
+            if guild:
+                match = re.search(r'<@!?(\d+)>', teilnehmer["name"])
+                if match:
+                    member = guild.get_member(int(match.group(1)))
+                    if member:
+                        display_name = member.display_name
             option = discord.SelectOption(
-                label=teilnehmer["name"],
+                label=display_name[:100],
                 value=str(idx),
                 description=f"{teilnehmer['punktzahl']} Punkte"
             )
@@ -2020,18 +2035,18 @@ class TeilnehmerView(discord.ui.View):
     """
     View mit Select-Menu für Teilnehmerauswahl.
     """
-    def __init__(self, ausbildung_id: int, teilnehmer_liste: List[Dict]):
+    def __init__(self, ausbildung_id: int, teilnehmer_liste: List[Dict], guild: discord.Guild = None):
         super().__init__()
         
         if teilnehmer_liste:
-            self.add_item(TeilnehmerSelect(ausbildung_id, teilnehmer_liste))
+            self.add_item(TeilnehmerSelect(ausbildung_id, teilnehmer_liste, guild))
 
 
-@tree.command(name="teilnehmer_entfernen", description="Entferne Teilnehmer aus der Auswertung")
+@tree.command(name="entfernen", description="Entferne Teilnehmer aus einer Auswertung")
 @app_commands.describe(
     ausbildung="Wähle die Ausbildung"
 )
-async def teilnehmer_entfernen_command(
+async def entfernen_command(
     interaction: discord.Interaction,
     ausbildung: str
 ):
@@ -2075,7 +2090,7 @@ async def teilnehmer_entfernen_command(
         return
     
     # Erstelle die View mit Select-Menu
-    view = TeilnehmerView(ausbildung_id, teilnehmer)
+    view = TeilnehmerView(ausbildung_id, teilnehmer, interaction.guild)
     
     # Zeige aktuelle Teilnehmer
     nachricht = f"**Teilnehmer der Ausbildung {ausbildung_data['bereich']} ({ausbildung_data['datum']})**\n\n"
@@ -2093,25 +2108,211 @@ async def teilnehmer_entfernen_command(
 
 
 # Autocomplete für Ausbildungsauswahl beim Teilnehmer entfernen
-@teilnehmer_entfernen_command.autocomplete('ausbildung')
-async def teilnehmer_entfernen_autocomplete(
+@entfernen_command.autocomplete('ausbildung')
+async def entfernen_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> List[app_commands.Choice[str]]:
-    """
-    Autocomplete-Handler für die Ausbildungsauswahl.
-    """
-    ausbildungen = data_manager.get_non_archived_ausbildungen()
-    choices = []
-    
-    for ausb_id, ausb_data in ausbildungen.items():
-        if ausb_data.get("ausgewertet", False):
-            continue
-        label = f"{ausb_data['bereich']} - {ausb_data['datum']} (ID: {ausb_id})"
-        if current.lower() in label.lower():
-            choices.append(app_commands.Choice(name=label, value=ausb_id))
-    
-    return choices[:25]
+    return await offene_ausbildung_autocomplete(interaction, current)
+
+
+# ==================== BULK AUSWERTUNG ====================
+
+class BulkAuswertungModal(discord.ui.Modal):
+    """Modal für Massenerfassung von Teilnehmern."""
+    def __init__(self, ausbildung_id: int, bereich: str, datum: str):
+        super().__init__(title=f"Teilnehmer eintragen")
+        self.ausbildung_id = ausbildung_id
+        self.bereich = bereich
+        self.datum = datum
+
+        self.teilnehmer_input = discord.ui.TextInput(
+            label="Teilnehmer (pro Zeile: @User Punkte)",
+            placeholder="@Max 45\n@Lisa 38\n@Tom 22",
+            style=discord.TextStyle.paragraph,
+            required=True,
+            max_length=2000
+        )
+        self.add_item(self.teilnehmer_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        zeilen = [z.strip() for z in self.teilnehmer_input.value.strip().splitlines() if z.strip()]
+        if not zeilen:
+            await interaction.response.send_message("❌ Keine Teilnehmer angegeben.", ephemeral=True)
+            return
+
+        erfolg = []
+        fehler = []
+
+        for zeile in zeilen:
+            # Erwartetes Format: <@123> 45  oder  <@!123> 45  oder  @name 45
+            match = re.match(r'(<@!?\d+>)\s+(\d+)', zeile)
+            if not match:
+                # Auch "UserID Punkte" Format unterstützen
+                match_id = re.match(r'(\d{5,})\s+(\d+)', zeile)
+                if match_id:
+                    mention = f"<@{match_id.group(1)}>"
+                    punkte = int(match_id.group(2))
+                else:
+                    fehler.append(f"`{zeile}` — Ungültiges Format")
+                    continue
+            else:
+                mention = match.group(1)
+                punkte = int(match.group(2))
+
+            ok = data_manager.add_teilnehmer(
+                self.ausbildung_id, mention, punkte, self.datum
+            )
+            if ok:
+                erfolg.append(f"{mention} — {punkte} Punkte")
+            else:
+                fehler.append(f"{mention} — Fehler beim Speichern")
+
+        antwort = ""
+        if erfolg:
+            antwort += f"✅ **{len(erfolg)} Teilnehmer eingetragen:**\n"
+            for e in erfolg:
+                antwort += f"  • {e}\n"
+        if fehler:
+            antwort += f"\n❌ **{len(fehler)} Fehler:**\n"
+            for f_text in fehler:
+                antwort += f"  • {f_text}\n"
+
+        await interaction.response.send_message(antwort, ephemeral=True)
+
+        if erfolg:
+            await log_aktion(
+                "👥 Bulk-Auswertung",
+                f"{len(erfolg)} Teilnehmer für {self.bereich} eingetragen.",
+                discord.Color.blue(),
+                [
+                    ("Ausbildung", f"{self.bereich} (ID: {self.ausbildung_id})", True),
+                    ("Anzahl", str(len(erfolg)), True),
+                    ("Von", interaction.user.display_name, True)
+                ]
+            )
+
+
+@tree.command(name="bulk", description="Mehrere Teilnehmer auf einmal zur Auswertung hinzufügen")
+@app_commands.describe(ausbildung="Wähle die Ausbildung")
+async def bulk_command(
+    interaction: discord.Interaction,
+    ausbildung: str
+):
+    if not hat_ausbilder_berechtigung(interaction):
+        await interaction.response.send_message(
+            "❌ Du hast keine Berechtigung!", ephemeral=True
+        )
+        return
+
+    try:
+        ausbildung_id = int(ausbildung)
+    except ValueError:
+        await interaction.response.send_message("❌ Ungültige Ausbildungs-ID!", ephemeral=True)
+        return
+
+    ausbildung_data = data_manager.get_ausbildung(ausbildung_id)
+    if not ausbildung_data:
+        await interaction.response.send_message(
+            f"❌ Ausbildung mit ID {ausbildung_id} nicht gefunden!", ephemeral=True
+        )
+        return
+
+    await interaction.response.send_modal(
+        BulkAuswertungModal(
+            ausbildung_id,
+            ausbildung_data['bereich'],
+            ausbildung_data['datum']
+        )
+    )
+
+
+@bulk_command.autocomplete('ausbildung')
+async def bulk_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+) -> List[app_commands.Choice[str]]:
+    return await alle_ausbildung_autocomplete(interaction, current)
+
+
+# ==================== INFO COMMAND ====================
+
+@tree.command(name="info", description="Zeigt Details zu einer bestimmten Ausbildung")
+@app_commands.describe(ausbildung="Wähle die Ausbildung")
+async def info_command(
+    interaction: discord.Interaction,
+    ausbildung: str
+):
+    if not hat_ausbilder_berechtigung(interaction):
+        await interaction.response.send_message(
+            "❌ Du hast keine Berechtigung!", ephemeral=True
+        )
+        return
+
+    try:
+        ausbildung_id = int(ausbildung)
+    except ValueError:
+        await interaction.response.send_message("❌ Ungültige Ausbildungs-ID!", ephemeral=True)
+        return
+
+    data = data_manager.get_ausbildung(ausbildung_id)
+    if not data:
+        await interaction.response.send_message(
+            f"❌ Ausbildung mit ID {ausbildung_id} nicht gefunden!", ephemeral=True
+        )
+        return
+
+    # Status bestimmen
+    if data.get('archiviert'):
+        status = "📦 Archiviert"
+    elif data.get('ausgewertet'):
+        status = "📊 Ausgewertet"
+    else:
+        status = "📝 Offen"
+
+    bereich = data['bereich']
+    abt_config = config["abteilungen"].get(bereich, {})
+    mindest = abt_config.get("mindestpunktzahl", "?")
+    maximal = abt_config.get("maximalpunktzahl", "?")
+
+    embed = discord.Embed(
+        title=f"#{ausbildung_id} • {bereich}",
+        color=discord.Color.from_rgb(88, 101, 242),
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="📅 Datum", value=data['datum'], inline=True)
+    embed.add_field(name="⏰ Uhrzeit", value=data['uhrzeit'], inline=True)
+    embed.add_field(name="📌 Status", value=status, inline=True)
+    embed.add_field(name="🎤 Host", value=data['host'], inline=True)
+    embed.add_field(name="🤝 Co-Host", value=data.get('cohost', 'Nicht zugewiesen'), inline=True)
+    embed.add_field(name="🙋 Helfer", value=data.get('helfer', 'Nicht zugewiesen'), inline=True)
+    embed.add_field(name="📊 Punkteskala", value=f"Mindestens **{mindest}** / Max **{maximal}**", inline=False)
+
+    teilnehmer = data.get('teilnehmer', [])
+    if teilnehmer:
+        tn_text = ""
+        for i, t in enumerate(teilnehmer, 1):
+            note = berechne_note(t['punktzahl'], int(maximal) if str(maximal).isdigit() else 100, int(mindest) if str(mindest).isdigit() else 0)
+            bestanden = "✅" if note in {"1", "2", "3"} else "❌"
+            tn_text += f"{bestanden} {t['name']} — **{t['punktzahl']}/{maximal}** (Note {note})\n"
+        embed.add_field(
+            name=f"👥 Teilnehmer ({len(teilnehmer)})",
+            value=tn_text[:1024],
+            inline=False
+        )
+    else:
+        embed.add_field(name="👥 Teilnehmer", value="Noch keine Teilnehmer eingetragen.", inline=False)
+
+    embed.set_footer(text="Akademie • Ausbildungsdetails")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@info_command.autocomplete('ausbildung')
+async def info_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+) -> List[app_commands.Choice[str]]:
+    return await alle_ausbildung_autocomplete(interaction, current)
 
 
 # ==================== BOT STARTEN ====================
