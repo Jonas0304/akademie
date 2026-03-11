@@ -154,7 +154,7 @@
       "emoji": "<:fd:1465739680002740437>",
       "rolle_bestanden": "PLACEHOLDER_ROLE_BESTANDEN",
       "rolle_nicht_bestanden": "PLACEHOLDER_ROLE_NICHT_BESTANDEN",
-      "vorlage": "# <:akademie:1420703957034078258> Taktische Notfallmedizin <:fd:1465739680002740437>\nEine Fortbildung zum Thema: Taktische Notfallmedizin findet statt, hier die wichtigsten Informationen:\n\n📅 Datum: {datum}\n⏰ Uhrzeit: {uhrzeit}\n🕑 Dauer: 30 Minuten\n\nVeranstalter\nHost: {host}\nCo-Host: {cohost}\nHelfer: {helfer}\n\nDiese Fortbildung ist vorausgesetzt um in den Gehobenen Dienst aufgenommen zu werden.\n\nJeder, der erscheinen wird, soll bitte mit <:fd:1465739680002740437> reagieren.\n\n<@&1463577206822404096>"
+      "vorlage": "# <:akademie:1420703957034078258> Taktische Notfallmedizin <:fd:1465739680002740437>\nEine Fortbildung zum Thema: Taktische Notfallmedizin findet statt, hier die wichtigsten Informationen:\n\n📅 Datum: {datum}\n⏰ Uhrzeit: {uhrzeit}\n🕑 Dauer: 30 Minuten\n\nVeranstalter\nHost: {host}\nCo-Host: {cohost}\nHelfer: {helfer}\n\nDiese Fortbildung ist in Zukunft vorausgesetzt um in den Gehobenen Dienst aufgenommen zu werden.\n\nJeder, der erscheinen wird, soll bitte mit <:fd:1465739680002740437> reagieren.\n\n<@&1463577206822404096>"
     }
   },
   "anfrage_kanal_id": "1468215723401941136",
